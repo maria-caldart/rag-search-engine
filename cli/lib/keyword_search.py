@@ -1,47 +1,23 @@
-import string
-
-# Load stopwords once
-file = open("data/stopwords.txt", 'r')
-sw = (file.read()).splitlines()
-
-def tokenization(text):
-	tok_text = text.split()
-	return tok_text
-
-def stopword_removal(text):
-	file = open("data/stopwords.txt", 'r')
-	sw = (file.read()).splitlines()
-	pre_text = []
-	for token in text:
-		if token not in sw:
-			pre_text.append(token)
-	return pre_text
-
-def preprocessing(text):
-	# 1. Remove punctuation
-	rm_punct_map_table = str.maketrans("", "", string.punctuation)
-	pre_text = (text.translate(rm_punct_map_table)).lower()
-	# 2. Tokenization
-	pre_text = tokenization(pre_text)
-	# 3. Stop word removal
-	pre_text = stopword_removal(pre_text)
-	return pre_text
+from lib.preprocessing import preprocessing
+from lib.search_utils import load_dataset
+import pickle
 
 
-def find_title_by_query(movies, query):
+def find_title_by_query(inv_index_movies, query):
 	results = []
 	pre_query = preprocessing(query)
-	for id, (title, _) in movies.items():
-		pre_title = preprocessing(title)
-		found = False
-		for query_token in pre_query:
-			for title_token in pre_title:
-				if query_token in title_token:
-					results.append((id, title))
-					found = True
-					break
-			if found:
-				break	
+	total_doc_ids = []
+	for query_token in pre_query:
+		doc_ids = inv_index_movies.get_documents(query_token)
+		total_doc_ids += doc_ids
+		if len(total_doc_ids) > 5:
+			total_doc_ids = total_doc_ids[:5]
+			total_doc_ids.sort()
+			break
+	
+	for doc_id in total_doc_ids:
+		title = inv_index_movies.get_title(doc_id)
+		results.append((doc_id, title))
 	return results
 
 def print_results(results):
@@ -49,3 +25,52 @@ def print_results(results):
 	for i in range(n):
 		id, title = results[i]
 		print(str(id) + ": " + title)
+
+def build_command():
+	inverted_index = InvertedIndex()
+	return inverted_index.build()
+
+def load_command():
+	inverted_index = InvertedIndex()
+	return inverted_index.load()
+
+class InvertedIndex:
+	index = {}
+	docmap = {}
+
+	def __add_document(self, doc_id, title, description):
+		self.docmap[doc_id] = {"title": title, "description": description}
+		tok_text = preprocessing(title) + preprocessing(description)
+		for token in tok_text:
+			self.index.setdefault(token, []).append(doc_id)
+
+	def get_documents(self, term):
+		doc_ids = []
+		if term in self.index:
+			doc_ids = self.index[term]
+		doc_ids.sort()
+		return doc_ids
+
+	def get_title(self, doc_id):
+		return self.docmap[doc_id]["title"]
+
+	def build(self):
+		movies = load_dataset()
+		for id, (title, description) in movies.items():
+			self.__add_document(id, title, description)
+		self.save()
+		return self
+
+	def load(self):
+		with open("cache/index.pkl", "rb") as f1:
+			self.index = pickle.load(f1)
+		with open("cache/docmap.pkl", "rb") as f2:
+			self.docmap = pickle.load(f2)
+		return self
+
+	def save(self):
+		with open("cache/index.pkl", "wb") as f:
+			pickle.dump(self.index, f)
+		with open("cache/docmap.pkl", "wb") as f:
+			pickle.dump(self.docmap, f)
+
